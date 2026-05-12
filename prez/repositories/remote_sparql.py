@@ -59,6 +59,11 @@ class RemoteSparqlRepo(Repo):
         await response.aread()
         return context, response.json()["results"]["bindings"]
 
+    async def ask_query(self, query: str) -> bool:
+        response = await self._send_query(query, "application/sparql-results+json")
+        await response.aread()
+        return response.json()["boolean"]
+
     async def sparql(
         self, query: str, raw_headers: list[tuple[bytes, bytes]], method: str = "GET"
     ):

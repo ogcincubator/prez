@@ -84,6 +84,9 @@ class PyoxigraphRepo(Repo):
             self._sync_tabular_query_to_table, query, context
         )
 
+    async def ask_query(self, query: str) -> bool:
+        return bool(await run_in_threadpool(self.pyoxi_store.query, query))
+
     async def sparql(
         self, query: str, raw_headers: list[tuple[bytes, bytes]], method: str = ""
     ) -> list | Graph | bool:

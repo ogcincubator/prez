@@ -39,6 +39,9 @@ class OxrdflibRepo(Repo):
             self._sync_tabular_query_to_table, query, context
         )
 
+    async def ask_query(self, query: str) -> bool:
+        return bool(await run_in_threadpool(self.oxrdflib_graph.query, query))
+
     def _str_type_for_rdflib_type(self, instance):
         map = {URIRef: "uri", BNode: "bnode", Literal: "literal"}
         return map[type(instance)]
