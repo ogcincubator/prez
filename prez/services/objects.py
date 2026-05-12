@@ -4,11 +4,12 @@ import logging
 import re
 import time
 import urllib.parse
-from urllib.parse import urlencode
+from collections import OrderedDict
+from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
 
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from rdf2geojson import convert
-from rdflib import RDF, URIRef, BNode
+from rdflib import OWL, RDF, URIRef, BNode
 from rdflib.namespace import GEO
 from sparql_grammar_pydantic import IRI, TriplesSameSubject, TriplesSameSubjectPath, Var
 
@@ -31,6 +32,58 @@ from prez.services.listings import listing_function
 from prez.services.query_generation.umbrella import PrezQueryConstructor
 
 log = logging.getLogger(__name__)
+
+_https_redirect_cache: OrderedDict[str, bool] = OrderedDict()
+_HTTPS_REDIRECT_CACHE_MAX = 2000
+
+
+def _cache_https_redirect(uri: str, value: bool) -> bool:
+    if uri in _https_redirect_cache:
+        _https_redirect_cache.move_to_end(uri)
+    else:
+        _https_redirect_cache[uri] = value
+        if len(_https_redirect_cache) > _HTTPS_REDIRECT_CACHE_MAX:
+            _https_redirect_cache.popitem(last=False)
+    return _https_redirect_cache[uri]
+
+
+def _http_object_url(url, https_uri: str) -> str:
+    http_uri = "http://" + https_uri[len("https://"):]
+    parsed = urlparse(str(url))
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    if "iri" in params:
+        params["iri"] = [http_uri]
+    elif "uri" in params:
+        params["uri"] = [http_uri]
+    return urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
+
+
+async def _resolve_https_focus_uri(focus_uri, item_graph, data_repo, url, pmts):
+    if not settings.https_to_http_redirect or not focus_uri.startswith("https://"):
+        return focus_uri
+    http_uri = "http://" + focus_uri[len("https://"):]
+    if focus_uri in _https_redirect_cache:
+        _https_redirect_cache.move_to_end(focus_uri)
+        should_redirect = _https_redirect_cache[focus_uri]
+        log.debug(f"https_redirect: cache hit for {focus_uri} -> {should_redirect}")
+    elif item_graph and (URIRef(focus_uri), OWL.sameAs, URIRef(http_uri)) in item_graph:
+        should_redirect = _cache_https_redirect(focus_uri, True)
+        log.debug(f"https_redirect: owl:sameAs found in graph for {focus_uri}, will redirect")
+    elif not item_graph:
+        should_redirect = _cache_https_redirect(focus_uri, await data_repo.ask_query(f"ASK {{ <{http_uri}> ?p ?o }}"))
+        log.debug(f"https_redirect: empty graph for {focus_uri}, ASK for http version -> {should_redirect}")
+    else:
+        should_redirect = _cache_https_redirect(focus_uri, False)
+        log.debug(f"https_redirect: graph has data but no owl:sameAs for {focus_uri}, no redirect")
+    if should_redirect:
+        is_html = pmts.requested_mediatypes and pmts.requested_mediatypes[0][0] in ("text/html", "*/*")
+        if is_html:
+            log.debug(f"https_redirect: HTML request, falling through with http URI {http_uri}")
+            return http_uri
+        else:
+            log.debug(f"https_redirect: RDF request, returning 302 to {_http_object_url(url, focus_uri)}")
+            return RedirectResponse(_http_object_url(url, focus_uri))
+    return focus_uri
 
 
 async def object_function(
@@ -89,12 +142,16 @@ async def object_function(
     query_start_time = time.time()
     item_graph, _ = await data_repo.send_queries([query], [])
     log.debug(f"Query time: {time.time() - query_start_time}")
+    result = await _resolve_https_focus_uri(profile_nodeshape.focus_node.value, item_graph, data_repo, url, pmts)
+    if isinstance(result, RedirectResponse):
+        return result
+    effective_focus_uri = result
     if settings.prez_ui_url:
         # If HTML or no specific media type requested
         if pmts.requested_mediatypes and (
                 pmts.requested_mediatypes[0][0] in ("text/html", "*/*")
         ):
-            item_uri = URIRef(profile_nodeshape.focus_node.value)
+            item_uri = URIRef(effective_focus_uri)
             await add_prez_links(item_graph, data_repo, endpoint_structure, [item_uri])
             prez_link = item_graph.value(
                 subject=item_uri, predicate=URIRef("https://prez.dev/link"), any=True

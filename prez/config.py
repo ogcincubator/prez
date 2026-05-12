@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     root_path: str = ""
     use_path_aliases: bool = False
     spatial_query_format: Literal["geosparql", "qlever", "graphdb"] = "geosparql"
+    https_to_http_redirect: bool = False
 
     @field_validator("prez_version")
     @classmethod
