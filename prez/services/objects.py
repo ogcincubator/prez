@@ -142,10 +142,12 @@ async def object_function(
     query_start_time = time.time()
     item_graph, _ = await data_repo.send_queries([query], [])
     log.debug(f"Query time: {time.time() - query_start_time}")
-    result = await _resolve_https_focus_uri(profile_nodeshape.focus_node.value, item_graph, data_repo, url, pmts)
+    original_focus_uri = profile_nodeshape.focus_node.value
+    result = await _resolve_https_focus_uri(original_focus_uri, item_graph, data_repo, url, pmts)
     if isinstance(result, RedirectResponse):
         return result
     effective_focus_uri = result
+    https_redirected = effective_focus_uri != original_focus_uri
     if settings.prez_ui_url:
         # If HTML or no specific media type requested
         if pmts.requested_mediatypes and (
@@ -159,7 +161,9 @@ async def object_function(
             prez_ui_url = re.sub(r"/+$", "", settings.prez_ui_url)
             if prez_link:
                 return RedirectResponse(prez_ui_url + str(prez_link))
-            elif len(item_graph):
+            elif len(item_graph) or https_redirected:
+                # https_redirected: item_graph was queried for the https URI (no data), but we
+                # confirmed the http URI has data via ASK; use /object rather than /404.
                 return RedirectResponse(prez_ui_url + "/object?uri=" + urllib.parse.quote_plus(item_uri))
             else:
                 return RedirectResponse(
