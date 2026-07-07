@@ -14,6 +14,7 @@ from sparql_grammar_pydantic import (
     LimitClause,
     LimitOffsetClauses,
     OffsetClause,
+    OptionalGraphPattern,
     OrderClause,
     OrderCondition,
     SelectClause,
@@ -53,7 +54,7 @@ class PrezQueryConstructor(ConstructQuery):
             WHERE {
                 <inner_select_tssp_list>
                 <inner_select_gpnt>
-                ?focus_node <order_by_predicate> <order_by_value>  # where order_by is specified
+                OPTIONAL { ?focus_node <order_by_predicate> <order_by_value> }  # where order_by is specified
             }
             ORDER BY <order_by_direction>(<order_by_value>)
             LIMIT <limit>
@@ -128,10 +129,22 @@ class PrezQueryConstructor(ConstructQuery):
                         predicate=order_by_predicate,
                         object=order_by_value
                     )
-            if inner_select_tssp_list:
-                inner_select_tssp_list.append(tssp)
+            # OPTIONAL: a resource missing the order_by predicate should still appear in the
+            # listing (sorted per SPARQL's unbound-first ordering rules), rather than being
+            # excluded entirely by a required triple pattern that fails to match.
+            optional_order_by = GraphPatternNotTriples(
+                content=OptionalGraphPattern(
+                    group_graph_pattern=GroupGraphPattern(
+                        content=GroupGraphPatternSub(
+                            triples_block=TriplesBlock.from_tssp_list([tssp])
+                        )
+                    )
+                )
+            )
+            if inner_select_gpnt:
+                inner_select_gpnt.append(optional_order_by)
             else:
-                inner_select_tssp_list = [tssp]
+                inner_select_gpnt = [optional_order_by]
 
         # for listing queries only, add an inner select to the where clause
         ss_gpotb = []

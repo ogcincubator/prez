@@ -104,7 +104,7 @@ def test_basic_listing():
         order_by_direction="ASC",
     )
     query_string = test.to_string()
-    assert "?focus_node <http://www.w3.org/2000/01/rdf-schema#label> ?order_by_val" in query_string
+    assert "OPTIONAL {\n?focus_node <http://www.w3.org/2000/01/rdf-schema#label> ?order_by_val" in query_string
     assert "ORDER BY ASC( STR( ?order_by_val ) )" in query_string
 
 
